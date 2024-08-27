@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>User Dashboard</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://cdn.rawgit.com/davidshimjs/qrcodejs/gh-pages/qrcode.min.js"></script>
+  <style>
+    /* CSS styles go here */
+    .quantity-control {
+      display: flex;
+      align-items: center;
+    }
+
+    .quantity-control button {
+      padding: 6px 12px;
+      font-size: 16px;
+    }
+
+    .quantity-control input {
+      width: 60px;
+      text-align: center;
+      margin: 0 10px;
+      font-size: 16px;
+    }
+
+    .bookings-container {
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .bookings-section {
+      width: 48%;
+    }
+
+    #payment-section {
+      margin-top: 20px;
+      text-align: center;
+    }
+
+    #paytm-qr-code {
+      max-width: 100%;
+      height: auto;
+    }
+
+    #request-message {
+      font-size: 16px;
+    }
+
+    #logout {
+      margin-top: 20px;
+    }
+  </style>
+</head>
+<body>
+  <h1>User Dashboard</h1>
+  <button id="request-cylinder">Request Cylinder</button>
+  <div class="quantity-control">
+    <button id="decrease-quantity">-</button>
+    <input type="number" id="cylinder-quantity" value="1" min="1">
+    <button id="increase-quantity">+</button>
+  </div>
+  <p id="request-message"></p>
+  
+  <h2>Booking History (Pending Requests)</h2>
+  <ul id="booking-history-list"></ul>
+
+  <!-- Approved and Rejected Bookings Section -->
+  <div class="bookings-container">
+    <div class="bookings-section" id="approved-bookings">
+      <h2>Approved Bookings</h2>
+      <ul id="approved-bookings-list"></ul>
+    </div>
+    <div class="bookings-section" id="rejected-bookings">
+      <h2>Rejected Bookings</h2>
+      <ul id="rejected-bookings-list"></ul>
+    </div>
+  </div>
+
+  <!-- Payment Section for Paytm QR Code -->
+  <div id="payment-section" style="display:none;">
+    <p>Scan this QR code to pay:</p>
+    <div id="paytm-qr-code"></div>
+  </div>
+
+  <button id="logout">Logout</button>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
+    import { getAuth } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
+    import { getFirestore, collection, addDoc, query, getDocs, where, updateDoc, doc } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+    
+    const firebaseConfig = {
+      apiKey: "AIzaSyBQxT_bH43EJn2WMtZ5daWzCnXxSvvUzso",
+      authDomain: "gas-company-833f9.firebaseapp.com",
+      projectId: "gas-company-833f9",
+      storageBucket: "gas-company-833f9.appspot.com",
+      messagingSenderId: "159581044707",
+      appId: "1:159581044707:web:2ab3731714330784f8ead6",
+      measurementId: "G-NNRJWKN5T4"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const firestore = getFirestore(app);
+
+    const userElements = {
+      requestCylinderButton: document.getElementById('request-cylinder'),
+      requestMessage: document.getElementById('request-message'),
+      bookingHistoryList: document.getElementById('booking-history-list'),
+      approvedBookingsList: document.getElementById('approved-bookings-list'),
+      rejectedBookingsList: document.getElementById('rejected-bookings-list'),
+      logoutButton: document.getElementById('logout'),
+      quantityInput: document.getElementById('cylinder-quantity'),
+      paymentSection: document.getElementById('payment-section'),
+      paytmQRCodeContainer: document.getElementById('paytm-qr-code'),
+      decreaseQuantityButton: document.getElementById('decrease-quantity'),
+      increaseQuantityButton: document.getElementById('increase-quantity')
+    };
+
+    // Function to load booking history, approved, and rejected bookings
+    const loadBookingData = async () => {
+      const user = auth.currentUser;
+      if (!user) return;
+
+      try {
+        // Query for all requests of the current user
+        const bookingsQuery = query(collection(firestore, 'requests'), where('userId', '==', user.uid));
+        const querySnapshot = await getDocs(bookingsQuery);
+
+        userElements.bookingHistoryList.innerHTML = '';
+        userElements.approvedBookingsList.innerHTML = '';
+        userElements.rejectedBookingsList.innerHTML = '';
+
+        if (querySnapshot.empty) {
+          const li = document.createElement('li');
+          li.textContent = 'No booking data available.';
+          userElements.bookingHistoryList.appendChild(li);
+        } else {
+          querySnapshot.forEach((doc) => {
+            const request = doc.data();
+            const li = document.createElement('li');
+            li.textContent = `Request ID: ${doc.id}, Quantity: ${request.quantity}, Status: ${request.status}`;
+
+            // Add to booking history if status is 'pending'
+            if (request.status === 'pending') {
+              userElements.bookingHistoryList.appendChild(li);
+            }
+
+            // Add to approved bookings if status is 'approved'
+            if (request.status === 'approved') {
+              const approveLi = document.createElement('li');
+              approveLi.innerHTML = `
+                Request ID: ${doc.id}, Quantity: ${request.quantity}, Status: ${request.status}
+                <div class="payment-methods">
+                  <label><input type="radio" name="payment-method-${doc.id}" value="cash" checked> Cash on Delivery</label>
+                  <label><input type="radio" name="payment-method-${doc.id}" value="paytm"> Paytm</label>
+                </div>
+                <button onclick="handlePayment('${doc.id}')">Pay</button>
+              `;
+              userElements.approvedBookingsList.appendChild(approveLi);
+            }
+
+            // Add to rejected bookings if status is 'rejected'
+            if (request.status === 'rejected') {
+              const rejectLi = document.createElement('li');
+              rejectLi.textContent = `Request ID: ${doc.id}, Quantity: ${request.quantity}, Status: ${request.status}`;
+              userElements.rejectedBookingsList.appendChild(rejectLi);
+            }
+          });
+        }
+      } catch (error) {
+        console.error("Error loading booking data:", error);
+      }
+    };
+
+    // Function to generate QR code for Paytm
+    const generateQRCode = (mobileNumber) => {
+      const paytmUrl = `https://paytm.com/payment-link?mobile_number=${mobileNumber}`;
+      new QRCode(userElements.paytmQRCodeContainer, {
+        text: paytmUrl,
+        width: 128,
+        height: 128
+      });
+    };
+
+    // Function to handle payment
+    window.handlePayment = async (requestId) => {
+      const paymentMethod = document.querySelector(`input[name="payment-method-${requestId}"]:checked`).value;
+
+      if (paymentMethod === 'paytm') {
+        // Retrieve admin mobile number from Firestore or use a placeholder
+        try {
+          const adminSnapshot = await getDocs(collection(firestore, 'admin_info'));
+          const adminData = adminSnapshot.docs[0].data(); // Assuming only one admin document
+          const adminMobileNumber = adminData.mobileNumber;
+          generateQRCode(adminMobileNumber);
+          userElements.paymentSection.style.display = 'block';
+          // Update the request document to reflect payment status
+          const requestRef = doc(firestore, 'requests', requestId);
+          await updateDoc(requestRef, { paymentStatus: 'pending' });
+          alert('Payment initiated. Please scan the QR code to pay.');
+          
+        } catch (error) {
+          console.error("Error retrieving admin info:", error);         
+        }
+        
+      } else {
+        // Handle cash on delivery (no additional UI required)
+        alert('Cash on delivery selected. No further action needed.');
+      }
+    };
+
+    // Quantity control functions
+    userElements.decreaseQuantityButton.addEventListener('click', () => {
+      let currentQuantity = parseInt(userElements.quantityInput.value, 10);
+      if (currentQuantity > 1) {
+        userElements.quantityInput.value = currentQuantity - 1;
+      }
+    });
+
+    userElements.increaseQuantityButton.addEventListener('click', () => {
+      let currentQuantity = parseInt(userElements.quantityInput.value, 10);
+      userElements.quantityInput.value = currentQuantity + 1;
+    });
+
+    userElements.requestCylinderButton.addEventListener('click', async () => {
+      const quantity = userElements.quantityInput.value;
+      
+      if (!quantity) {
+        userElements.requestMessage.textContent = 'Please enter a quantity.';
+        userElements.requestMessage.style.color = 'red';
+        return;
+      }
+
+      try {
+        const user = auth.currentUser;
+        if (!user) throw new Error('No user is signed in.');
+
+        const bookingRef = collection(firestore, 'requests');
+        await addDoc(bookingRef, {
+          userId: user.uid,
+          quantity: parseInt(quantity, 10),
+          status: 'pending',
+          paymentStatus: 'not paid',
+          timestamp: new Date()
+        });
+
+        userElements.requestMessage.textContent = 'Cylinder request submitted successfully!';
+        userElements.requestMessage.style.color = 'green';
+
+        // Update booking data
+        loadBookingData();
+      } catch (error) {
+        console.error("Error requesting cylinder:", error);
+        userElements.requestMessage.textContent = `Error: ${error.message}`;
+        userElements.requestMessage.style.color = 'red';
+      }
+    });
+
+    // Load booking data on page load
+    auth.onAuthStateChanged(async (user) => {
+      if (user) {
+        loadBookingData();
+      } else {
+        window.location.href = 'login.html';
+      }
+    });
+
+    userElements.logoutButton.addEventListener('click', () => {
+      auth.signOut().then(() => {
+        window.location.href = 'login.html';
+      }).catch((error) => {
+        console.error("Error logging out:", error);
+      });
+    });
+  </script>
+</body>
+</html>

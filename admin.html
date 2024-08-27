@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin Dashboard</title>
+  <style>
+    /* General Styles */
+body {
+  font-family: Arial, sans-serif;
+  margin: 0;
+  padding: 0;
+  background-color: #f4f4f4;
+  color: #333;
+}
+
+h1, h2 {
+  color: #2c3e50;
+}
+
+h1 {
+  text-align: center;
+  margin-top: 20px;
+}
+
+h2 {
+  border-bottom: 2px solid #3498db;
+  padding-bottom: 10px;
+  margin-bottom: 20px;
+  font-size: 1.5rem;
+}
+
+/* Buttons */
+button {
+  background-color: #3498db;
+  color: #fff;
+  border: none;
+  padding: 10px 15px;
+  margin: 5px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 1rem;
+  transition: background-color 0.3s ease;
+}
+
+button:hover {
+  background-color: #2980b9;
+}
+
+button:active {
+  background-color: #1c5980;
+}
+
+/* Lists */
+ul {
+  list-style-type: none;
+  padding: 0;
+}
+
+li {
+  background-color: #fff;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  padding: 10px;
+  margin-bottom: 10px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+/* Payment Section */
+#payment-section {
+  margin-top: 20px;
+  text-align: center;
+}
+
+#paytm-qr-code {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Logout Button */
+#logout {
+  background-color: #e74c3c;
+  color: #fff;
+  padding: 10px 20px;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  position: absolute;
+  top: 20px;
+  right: 20px;
+}
+
+#logout:hover {
+  background-color: #c0392b;
+}
+
+#logout:active {
+  background-color: #a93226;
+}
+
+/* Responsive Styles */
+@media (max-width: 768px) {
+  body {
+    padding: 10px;
+  }
+
+  h1 {
+    font-size: 1.5rem;
+  }
+
+  h2 {
+    font-size: 1.2rem;
+  }
+
+  button {
+    padding: 8px 12px;
+    font-size: 0.9rem;
+  }
+
+  li {
+    padding: 8px;
+  }
+}
+
+@media (max-width: 480px) {
+  h1 {
+    font-size: 1.2rem;
+  }
+
+  h2 {
+    font-size: 1rem;
+  }
+
+  button {
+    width: 100%;
+    padding: 12px;
+    font-size: 1rem;
+    margin: 5px 0;
+  }
+
+  #logout {
+    position: static;
+    width: 100%;
+    margin-top: 20px;
+  }
+}
+
+  </style>
+</head>
+<body>
+  <h1>Admin Dashboard</h1>
+  <button id="logout">Logout</button>
+  
+  <h2>Booking Requests</h2>
+  <ul id="requests-list"></ul>
+
+  <h2>Approved Requests</h2>
+  <ul id="approved-requests-list"></ul>
+
+  <h2>Rejected Requests</h2>
+  <ul id="rejected-requests-list"></ul>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
+    import { getAuth } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
+    import { getFirestore, collection, query, getDocs, updateDoc, doc } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyBQxT_bH43EJn2WMtZ5daWzCnXxSvvUzso",
+      authDomain: "gas-company-833f9.firebaseapp.com",
+      projectId: "gas-company-833f9",
+      storageBucket: "gas-company-833f9.appspot.com",
+      messagingSenderId: "159581044707",
+      appId: "1:159581044707:web:2ab3731714330784f8ead6",
+      measurementId: "G-NNRJWKN5T4"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const firestore = getFirestore(app);
+
+    const requestsList = document.getElementById('requests-list');
+    const approvedRequestsList = document.getElementById('approved-requests-list');
+    const rejectedRequestsList = document.getElementById('rejected-requests-list');
+    const logoutButton = document.getElementById('logout');
+
+    // Function to load all requests
+    const loadRequests = async () => {
+      try {
+        const requestsQuery = query(collection(firestore, 'requests'));
+        const querySnapshot = await getDocs(requestsQuery);
+
+        requestsList.innerHTML = '';
+        approvedRequestsList.innerHTML = '';
+        rejectedRequestsList.innerHTML = '';
+
+        if (querySnapshot.empty) {
+          const li = document.createElement('li');
+          li.textContent = 'No requests available.';
+          requestsList.appendChild(li);
+        } else {
+          querySnapshot.forEach((doc) => {
+            const request = doc.data();
+            const li = document.createElement('li');
+            li.innerHTML = `
+              Request ID: ${doc.id}, Quantity: ${request.quantity}, Status: ${request.status}
+              <button onclick="approveRequest('${doc.id}')">Approve</button>
+              <button onclick="rejectRequest('${doc.id}')">Reject</button>
+            `;
+            if (request.status === 'pending') {
+              requestsList.appendChild(li);
+            } else if (request.status === 'approved') {
+              approvedRequestsList.innerHTML += `
+                <li>Request ID: ${doc.id}, Quantity: ${request.quantity}, Status: ${request.status}</li>
+              `;
+            } else if (request.status === 'rejected') {
+              rejectedRequestsList.innerHTML += `
+                <li>Request ID: ${doc.id}, Quantity: ${request.quantity}, Status: ${request.status}</li>
+              `;
+            }
+          });
+        }
+      } catch (error) {
+        console.error("Error loading requests:", error);
+      }
+    };
+
+    // Function to approve a request
+    window.approveRequest = async (requestId) => {
+      try {
+        const requestRef = doc(firestore, 'requests', requestId);
+        await updateDoc(requestRef, { status: 'approved' });
+        alert('Request approved.');
+        loadRequests(); // Refresh the request list
+      } catch (error) {
+        console.error("Error approving request:", error);
+        alert('Failed to approve request: ' + error.message);
+      }
+    };
+
+    // Function to reject a request
+    window.rejectRequest = async (requestId) => {
+      try {
+        const requestRef = doc(firestore, 'requests', requestId);
+        await updateDoc(requestRef, { status: 'rejected' });
+        alert('Request rejected.');
+        loadRequests(); // Refresh the request list
+      } catch (error) {
+        console.error("Error rejecting request:", error);
+        alert('Failed to reject request: ' + error.message);
+      }
+    };
+
+    // Load requests on page load
+    loadRequests();
+
+    // Logout functionality
+    logoutButton.addEventListener('click', () => {
+      auth.signOut().then(() => {
+        window.location.href = 'login.html';
+      }).catch((error) => {
+        console.error("Error logging out:", error);
+      });
+    });
+  </script>
+</body>
+</html>
