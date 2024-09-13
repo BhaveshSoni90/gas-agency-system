@@ -51,6 +51,51 @@
     #logout {
       margin-top: 20px;
     }
+
+    #payment-paid-section {
+      margin-top: 20px;
+    }
+
+    #payment-completed-section {
+      margin-top: 20px;
+    }
+
+    /* Modal styles */
+    .modal {
+      display: none;
+      position: fixed;
+      z-index: 1000;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      overflow: auto;
+      background-color: rgba(0,0,0,0.4);
+      justify-content: center;
+      align-items: center;
+    }
+
+    .modal-content {
+      background-color: #fefefe;
+      margin: 15% auto;
+      padding: 20px;
+      border: 1px solid #888;
+      width: 80%;
+    }
+
+    .close {
+      color: #aaa;
+      float: right;
+      font-size: 28px;
+      font-weight: bold;
+    }
+
+    .close:hover,
+    .close:focus {
+      color: black;
+      text-decoration: none;
+      cursor: pointer;
+    }
   </style>
 </head>
 <body>
@@ -84,12 +129,31 @@
     <div id="paytm-qr-code"></div>
   </div>
 
+  <!-- Payment Completed Section -->
+  <div id="payment-completed-section" style="display:none;">
+    <p>Payment completed successfully. Your cylinder will be delivered soon!</p>
+  </div>
+
+  <!-- Payment Paid Section -->
+  <div id="payment-paid-section">
+    <h2>Payment Paid</h2>
+    <ul id="payment-paid-list"></ul>
+  </div>
+
+  <!-- Modal for Payment Confirmation -->
+  <div id="payment-confirmation-modal" class="modal">
+    <div class="modal-content">
+      <span class="close">&times;</span>
+      <p>Payment completed successfully. Your cylinder will be delivered soon!</p>
+    </div>
+  </div>
+
   <button id="logout">Logout</button>
 
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
-    import { getAuth } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
-    import { getFirestore, collection, addDoc, query, getDocs, where, updateDoc, doc } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+    import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
+    import { getFirestore, collection, addDoc, query, getDocs, where, updateDoc, doc, getDoc } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
     
     const firebaseConfig = {
       apiKey: "AIzaSyBQxT_bH43EJn2WMtZ5daWzCnXxSvvUzso",
@@ -111,18 +175,24 @@
       bookingHistoryList: document.getElementById('booking-history-list'),
       approvedBookingsList: document.getElementById('approved-bookings-list'),
       rejectedBookingsList: document.getElementById('rejected-bookings-list'),
+      paymentPaidList: document.getElementById('payment-paid-list'),
       logoutButton: document.getElementById('logout'),
       quantityInput: document.getElementById('cylinder-quantity'),
       paymentSection: document.getElementById('payment-section'),
       paytmQRCodeContainer: document.getElementById('paytm-qr-code'),
+      paymentCompletedSection: document.getElementById('payment-completed-section'),
       decreaseQuantityButton: document.getElementById('decrease-quantity'),
-      increaseQuantityButton: document.getElementById('increase-quantity')
+      increaseQuantityButton: document.getElementById('increase-quantity'),
+      paymentConfirmationModal: document.getElementById('payment-confirmation-modal'),
+      modalCloseButton: document.querySelector('.modal .close')
     };
 
-    // Function to load booking history, approved, and rejected bookings
-    const loadBookingData = async () => {
-      const user = auth.currentUser;
-      if (!user) return;
+    // Function to load booking data
+    const loadBookingData = async (user) => {
+      if (!user) {
+        alert('User not authenticated. Please log in.');
+        return;
+      }
 
       try {
         // Query for all requests of the current user
@@ -132,6 +202,7 @@
         userElements.bookingHistoryList.innerHTML = '';
         userElements.approvedBookingsList.innerHTML = '';
         userElements.rejectedBookingsList.innerHTML = '';
+        userElements.paymentPaidList.innerHTML = '';
 
         if (querySnapshot.empty) {
           const li = document.createElement('li');
@@ -142,6 +213,7 @@
             const request = doc.data();
             const li = document.createElement('li');
             li.textContent = `Request ID: ${doc.id}, Quantity: ${request.quantity}, Status: ${request.status}`;
+            li.dataset.requestId = doc.id;
 
             // Add to booking history if status is 'pending'
             if (request.status === 'pending') {
@@ -157,8 +229,9 @@
                   <label><input type="radio" name="payment-method-${doc.id}" value="cash" checked> Cash on Delivery</label>
                   <label><input type="radio" name="payment-method-${doc.id}" value="paytm"> Paytm</label>
                 </div>
-                <button onclick="handlePayment('${doc.id}')">Pay</button>
+                <button data-request-id="${doc.id}" class="pay-button">Pay</button>
               `;
+              approveLi.dataset.requestId = doc.id;
               userElements.approvedBookingsList.appendChild(approveLi);
             }
 
@@ -168,6 +241,21 @@
               rejectLi.textContent = `Request ID: ${doc.id}, Quantity: ${request.quantity}, Status: ${request.status}`;
               userElements.rejectedBookingsList.appendChild(rejectLi);
             }
+
+            // Add to payment paid list if paymentStatus is 'completed'
+            if (request.paymentStatus === 'completed') {
+              const paidLi = document.createElement('li');
+              paidLi.textContent = `Request ID: ${doc.id}, Quantity: ${request.quantity}, Payment Method: ${request.paymentMethod}`;
+              paidLi.dataset.requestId = doc.id;
+              userElements.paymentPaidList.appendChild(paidLi);
+            }
+          });
+
+          // Attach event listeners to "Pay" buttons
+          document.querySelectorAll('.pay-button').forEach(button => {
+            button.addEventListener('click', () => {
+              handlePayment(button.dataset.requestId);
+            });
           });
         }
       } catch (error) {
@@ -175,11 +263,16 @@
       }
     };
 
+    // Function to generate Paytm payment URL
+    const generatePaytmPaymentURL = (amount, mobileNumber, requestId) => {
+      // Replace with actual Paytm payment URL generation logic
+      return `https://paytm.com/payment-link?amount=${amount}&mobile_number=${mobileNumber}&request_id=${requestId}`;
+    };
+
     // Function to generate QR code for Paytm
-    const generateQRCode = (mobileNumber) => {
-      const paytmUrl = `https://paytm.com/payment-link?mobile_number=${mobileNumber}`;
+    const generateQRCode = (paymentURL) => {
       new QRCode(userElements.paytmQRCodeContainer, {
-        text: paytmUrl,
+        text: paymentURL,
         width: 128,
         height: 128
       });
@@ -187,93 +280,131 @@
 
     // Function to handle payment
     window.handlePayment = async (requestId) => {
-      const paymentMethod = document.querySelector(`input[name="payment-method-${requestId}"]:checked`).value;
+      try {
+        // Fetch the request details using `getDoc`
+        const requestDocRef = doc(firestore, 'requests', requestId);
+        const requestDoc = await getDoc(requestDocRef);
+        const requestData = requestDoc.data();
 
-      if (paymentMethod === 'paytm') {
-        // Retrieve admin mobile number from Firestore or use a placeholder
-        try {
-          const adminSnapshot = await getDocs(collection(firestore, 'admin_info'));
-          const adminData = adminSnapshot.docs[0].data(); // Assuming only one admin document
-          const adminMobileNumber = adminData.mobileNumber;
-          generateQRCode(adminMobileNumber);
-          userElements.paymentSection.style.display = 'block';
-          // Update the request document to reflect payment status
-          const requestRef = doc(firestore, 'requests', requestId);
-          await updateDoc(requestRef, { paymentStatus: 'pending' });
-          alert('Payment initiated. Please scan the QR code to pay.');
-          
-        } catch (error) {
-          console.error("Error retrieving admin info:", error);         
+        if (!requestData) {
+          alert('Request not found.');
+          return;
         }
-        
-      } else {
-        // Handle cash on delivery (no additional UI required)
-        alert('Cash on delivery selected. No further action needed.');
+
+        const selectedPaymentMethod = document.querySelector(`input[name="payment-method-${requestId}"]:checked`).value;
+
+        if (selectedPaymentMethod === 'paytm') {
+          // Generate Paytm payment URL
+          const paymentURL = generatePaytmPaymentURL(requestData.quantity * 100, 'your-mobile-number', requestId);
+
+          // Show payment section and generate QR code
+          userElements.paymentSection.style.display = 'block';
+          generateQRCode(paymentURL);
+
+          // Update the request status to 'pending'
+          await updateDoc(requestDocRef, { paymentStatus: 'pending', paymentMethod: 'paytm' });
+        } else if (selectedPaymentMethod === 'cash') {
+          // Handle cash on delivery
+          await updateDoc(requestDocRef, { paymentStatus: 'completed', paymentMethod: 'cash' });
+          userElements.paymentCompletedSection.style.display = 'block';
+
+          // Remove the booking from "Approved Bookings" section
+          const approvedItem = document.querySelector(`#approved-bookings-list li[data-request-id="${requestId}"]`);
+          if (approvedItem) approvedItem.remove();
+
+          // Show a popup message
+          userElements.paymentConfirmationModal.style.display = 'flex';
+
+          // Hide the modal when close button is clicked
+          userElements.modalCloseButton.addEventListener('click', () => {
+            userElements.paymentConfirmationModal.style.display = 'none';
+          });
+
+          // Also hide the modal when clicking outside of it
+          window.addEventListener('click', (event) => {
+            if (event.target === userElements.paymentConfirmationModal) {
+              userElements.paymentConfirmationModal.style.display = 'none';
+            }
+          });
+        }
+
+        // Add to payment paid list
+        const paidLi = document.createElement('li');
+        paidLi.textContent = `Request ID: ${requestId}, Quantity: ${requestData.quantity}, Payment Method: ${requestData.paymentMethod}`;
+        paidLi.dataset.requestId = requestId;
+        userElements.paymentPaidList.appendChild(paidLi);
+
+        // Update the booking data after payment
+        loadBookingData(auth.currentUser);
+
+      } catch (error) {
+        console.error("Error handling payment:", error);
+        alert(`Error handling payment: ${error.message}`);
       }
     };
 
-    // Quantity control functions
+    // Event listener for quantity buttons
     userElements.decreaseQuantityButton.addEventListener('click', () => {
-      let currentQuantity = parseInt(userElements.quantityInput.value, 10);
-      if (currentQuantity > 1) {
-        userElements.quantityInput.value = currentQuantity - 1;
+      const currentValue = parseInt(userElements.quantityInput.value);
+      if (currentValue > 1) {
+        userElements.quantityInput.value = currentValue - 1;
       }
     });
 
     userElements.increaseQuantityButton.addEventListener('click', () => {
-      let currentQuantity = parseInt(userElements.quantityInput.value, 10);
-      userElements.quantityInput.value = currentQuantity + 1;
+      const currentValue = parseInt(userElements.quantityInput.value);
+      userElements.quantityInput.value = currentValue + 1;
     });
 
+    // Event listener for request cylinder button
     userElements.requestCylinderButton.addEventListener('click', async () => {
-      const quantity = userElements.quantityInput.value;
-      
-      if (!quantity) {
-        userElements.requestMessage.textContent = 'Please enter a quantity.';
-        userElements.requestMessage.style.color = 'red';
-        return;
-      }
-
       try {
         const user = auth.currentUser;
-        if (!user) throw new Error('No user is signed in.');
+        if (!user) {
+          alert('User not authenticated. Please log in.');
+          return;
+        }
 
-        const bookingRef = collection(firestore, 'requests');
-        await addDoc(bookingRef, {
+        const quantity = parseInt(userElements.quantityInput.value);
+
+        if (quantity < 1) {
+          alert('Quantity must be at least 1.');
+          return;
+        }
+
+        await addDoc(collection(firestore, 'requests'), {
           userId: user.uid,
-          quantity: parseInt(quantity, 10),
+          quantity: quantity,
           status: 'pending',
-          paymentStatus: 'not paid',
-          timestamp: new Date()
+          paymentStatus: 'not paid'
         });
 
-        userElements.requestMessage.textContent = 'Cylinder request submitted successfully!';
-        userElements.requestMessage.style.color = 'green';
+        userElements.requestMessage.textContent = `Request for ${quantity} cylinder(s) has been submitted.`;
+        loadBookingData(user);
 
-        // Update booking data
-        loadBookingData();
       } catch (error) {
         console.error("Error requesting cylinder:", error);
-        userElements.requestMessage.textContent = `Error: ${error.message}`;
-        userElements.requestMessage.style.color = 'red';
+        userElements.requestMessage.textContent = 'Error requesting cylinder. Please try again.';
       }
     });
 
-    // Load booking data on page load
-    auth.onAuthStateChanged(async (user) => {
-      if (user) {
-        loadBookingData();
-      } else {
-        window.location.href = 'login.html';
-      }
-    });
-
+    // Event listener for logout button
     userElements.logoutButton.addEventListener('click', () => {
       auth.signOut().then(() => {
-        window.location.href = 'login.html';
+        alert('You have been logged out.');
+        window.location.href = 'login.html'; // Redirect to login page
       }).catch((error) => {
-        console.error("Error logging out:", error);
+        console.error('Error logging out:', error);
       });
+    });
+
+    // Listen for authentication state changes
+    onAuthStateChanged(auth, (user) => {
+      if (user) {
+        loadBookingData(user);
+      } else {
+        window.location.href = 'login.html'; // Redirect to login page if not authenticated
+      }
     });
   </script>
 </body>
